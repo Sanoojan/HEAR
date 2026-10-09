@@ -32,7 +32,7 @@ HEAR/
     └── test_config.yaml
 ```
 
-`DeepfakeDatasets` can be a local directory or a symlink to your dataset storage. Manifest frame paths must match the selected RGB root. HEAR consumes RGB face frames and video labels; masks, landmarks, and optical flow are not required for training or evaluation.
+`DeepfakeDatasets` can be a local directory or a symlink to your dataset storage. Manifest frame paths must match the selected RGB root. HEAR consumes RGB face frames and video labels
 
 Set the data paths in `training/config/train_config.yaml` for training and in `training/config/test_config.yaml` for evaluation. Run all commands below from the repository root.
 
@@ -55,7 +55,7 @@ python -m pip check
 
 The environment file provides Python 3.10 and build tools for dependencies such as dlib. The PyTorch command installs CUDA 12.1 wheels; a separate CUDA toolkit installation is not needed for those wheels. See the [official PyTorch installation commands](https://pytorch.org/get-started/previous-versions/#v251) if a different CUDA build is needed. Keep the matching PyTorch/torchvision versions.
 
-Install dlib with CUDA disabled as shown above; it is needed by inherited imports, and its CPU build avoids conflicts with the PyTorch CUDA libraries. HEAR itself still runs on the GPU.
+Install dlib with CUDA disabled as shown above; it is needed by inherited imports, and its CPU build avoids conflicts with the PyTorch CUDA libraries. 
 
 The dependency file pins the timm revision used by the local DINOv3 implementation and the Albumentations API used by the dataset loader. Keep these pins when reproducing this setup.
 
@@ -105,7 +105,7 @@ hf download Sanoojan/HEAR hear_clip_l14.pth hear_clip_l14.pth.sha256 \
 (cd checkpoints && sha256sum -c hear_clip_l14.pth.sha256)
 ```
 
-Maintainer upload instructions and a prepared model card are in [release/huggingface](release/huggingface/PUBLISH.md).
+
 
 ## Testing
 
@@ -162,7 +162,7 @@ Add **`--visualize_patchwise`** to the same test command:
 ```bash
 CUDA_VISIBLE_DEVICES=0 python training/test.py \
   --detector_path training/config/detector/clip_inference.yaml \
-  --test_dataset fomm_ff \
+  --test_dataset DFDC \
   --weights_path checkpoints/hear_clip_l14.pth \
   --test_name HEAR_visualization \
   --visualize_patchwise
@@ -171,7 +171,7 @@ CUDA_VISIBLE_DEVICES=0 python training/test.py \
 This example uses the DF40 roots above. The output contains the original face frames beside the patch-evidence heatmap, saved as named MP4 files under:
 
 ```text
-visualizations/patch_scores/HEAR_visualization/fomm_ff/
+visualizations/patch_scores/HEAR_visualization/DFDC/
 ```
 
 Optionally add `--save_patch_scores` to save patch scores, video names, labels, and predictions under `visualizations/saved_patch_scores/<test_name>/<dataset>.pkl`. This flag works with or without visualization.
