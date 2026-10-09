@@ -1,0 +1,255 @@
+"""
+eval pretained model.
+"""
+import os
+import numpy as np
+from os.path import join
+import cv2
+import random
+import datetime
+import time
+import yaml
+import pickle
+from tqdm import tqdm
+from copy import deepcopy
+from PIL import Image as pil_image
+from metrics.utils import get_test_metrics
+import torch
+import torch.nn as nn
+import torch.nn.parallel
+import torch.backends.cudnn as cudnn
+import torch.nn.functional as F
+import torch.utils.data
+import torch.optim as optim
+
+from dataset.abstract_dataset import DeepfakeAbstractBaseDataset
+from dataset.ff_blend import FFBlendDataset
+from dataset.fwa_blend import FWABlendDataset
+from dataset.pair_dataset import pairDataset
+
+from trainer.trainer import Trainer
+from detectors import DETECTOR
+from metrics.base_metrics_class import Recorder
+from collections import defaultdict
+from metrics.utils import patch_score_visualize
+
+import argparse
+from logger import create_logger
+import wandb
+
+parser = argparse.ArgumentParser(description='Process some paths.')
+parser.add_argument('--detector_path', type=str, 
+                    default='/home/zhiyuanyan/DeepfakeBench/training/config/detector/resnet34.yaml',
+                    help='path to detector YAML file')
+parser.add_argument("--test_dataset", nargs="+")
+parser.add_argument('--weights_path', type=str, 
+                    default='/mntcephfs/lab_data/zhiyuanyan/benchmark_results/auc_draw/cnn_aug/resnet34_2023-05-20-16-57-22/test/FaceForensics++/ckpt_epoch_9_best.pth')
+#parser.add_argument("--lmdb", action='store_true', default=False)
+parser.add_argument('--test_name', type=str, default='', help='name of this test')
+parser.add_argument('--debug', action='store_true', default=False, help='debug mode')
+parser.add_argument('--save_patch_scores', action='store_true', default=False, help='whether to save patch scores for visualization')
+parser.add_argument('--visualize_patchwise', action='store_true', default=False, help='whether to visualize patchwise scores')
+args = parser.parse_args()
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+wandb.init(
+    project="DeepfakeBench",
+    name=args.test_name,
+    config=vars(args)
+)
+
+def init_seed(config):
+    if config['manualSeed'] is None:
+        config['manualSeed'] = random.randint(1, 10000)
+    random.seed(config['manualSeed'])
+    torch.manual_seed(config['manualSeed'])
+    if config['cuda']:
+        torch.cuda.manual_seed_all(config['manualSeed'])
+
+
+def prepare_testing_data(config):
+    def get_test_data_loader(config, test_name):
+        # update the config dictionary with the specific testing dataset
+        config = config.copy()  # create a copy of config to avoid altering the original one
+        config['test_dataset'] = test_name  # specify the current test dataset
+        test_set = DeepfakeAbstractBaseDataset(
+                config=config,
+                mode='test', 
+            )
+        test_data_loader = \
+            torch.utils.data.DataLoader(
+                dataset=test_set, 
+                batch_size=config['test_batchSize'],
+                shuffle=False, 
+                num_workers=int(config['workers']),
+                collate_fn=test_set.collate_fn,
+                drop_last=False
+            )
+        return test_data_loader
+
+    test_data_loaders = {}
+    for one_test_name in config['test_dataset']:
+        test_data_loaders[one_test_name] = get_test_data_loader(config, one_test_name)
+    return test_data_loaders
+
+
+def choose_metric(config):
+    metric_scoring = config['metric_scoring']
+    if metric_scoring not in ['eer', 'auc', 'acc', 'ap']:
+        raise NotImplementedError('metric {} is not implemented'.format(metric_scoring))
+    return metric_scoring
+
+@torch.no_grad()
+def test_one_dataset(model, data_loader, visualize_patchwise=False, dataset_name=None):
+    prediction_lists, feature_lists, label_lists = [], [], []
+    patch_scores_all, video_names = [], []
+    sample_offset = 0
+    for data_dict in tqdm(data_loader, total=len(data_loader)):
+        images = data_dict['image']
+        batch_names = data_dict['video_name']
+        data_dict['image'] = images.flatten(0, 1) if images.ndim == 5 else images
+        data_dict['image'] = data_dict['image'].to(device)
+        data_dict['label'] = torch.where(data_dict['label'] != 0, 1, 0).to(device)
+        predictions = model(data_dict)
+        labels = data_dict['label'].cpu().numpy()
+        probabilities = predictions['prob'].cpu().numpy()
+
+        if visualize_patchwise or args.save_patch_scores:
+            patch_scores = predictions['patch_scores'].detach().cpu()
+            if visualize_patchwise:
+                # Render one batch at a time rather than retaining all dataset frames.
+                dataset_config = data_loader.dataset.config
+                patch_score_visualize(
+                    images, labels, patch_scores, probabilities,
+                    save_dir=os.path.join('visualizations/patch_scores', args.test_name, dataset_name),
+                    fps=5, video_names=batch_names, start_index=sample_offset,
+                    mean=dataset_config['mean'], std=dataset_config['std'],
+                )
+            if args.save_patch_scores:
+                patch_scores_all.append(patch_scores)
+                video_names.extend(batch_names)
+
+        label_lists.extend(labels)
+        prediction_lists.extend(probabilities)
+        feature_lists.extend(predictions['feat'].cpu().numpy())
+        sample_offset += len(labels)
+
+    if args.save_patch_scores:
+        save_path = os.path.join('visualizations/saved_patch_scores', args.test_name, f'{dataset_name}.pkl')
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        with open(save_path, 'wb') as f:
+            pickle.dump({
+                'patch_scores': torch.cat(patch_scores_all, dim=0),
+                'labels': label_lists,
+                'predictions': prediction_lists,
+                'video_names': video_names,
+                'layerwise_prediction': [],
+            }, f)
+        print(f'Saved patch scores to {save_path}')
+
+    return np.array(prediction_lists), np.array(label_lists), np.array(feature_lists)
+
+@torch.no_grad()
+def test_epoch(model, test_data_loaders, visualize_patchwise=False):
+    # set model to eval mode
+    model.eval()
+
+    # define test recorder
+    metrics_all_datasets = {}
+
+    # testing for all test data
+    keys = test_data_loaders.keys()
+    for key in keys:
+        data_dict = test_data_loaders[key].dataset.data_dict
+        # compute loss for each dataset
+        predictions_nps, label_nps,feat_nps = test_one_dataset(model, test_data_loaders[key], visualize_patchwise=visualize_patchwise,dataset_name=key)
+        
+        # compute metric for each dataset
+        metric_one_dataset = get_test_metrics(y_pred=predictions_nps, y_true=label_nps,
+                                              img_names=data_dict['image'])
+        metrics_all_datasets[key] = metric_one_dataset
+        
+        # info for each dataset
+        tqdm.write(f"dataset: {key}")
+        for k, v in metric_one_dataset.items():
+            tqdm.write(f"{k}: {v}")
+            wandb.log({f"test_best/{key}_{k}": v})
+
+    return metrics_all_datasets
+
+@torch.no_grad()
+def inference(model, data_dict):
+    predictions = model(data_dict, inference=True)
+    return predictions
+
+
+def main():
+    # parse options and load config
+    with open(args.detector_path, 'r') as f:
+        config = yaml.safe_load(f)
+    with open('./training/config/test_config.yaml', 'r') as f:
+        config2 = yaml.safe_load(f)
+    config.update(config2)
+    if 'label_dict' in config:
+        config2['label_dict']=config['label_dict']
+    weights_path = None
+    # If arguments are provided, they will overwrite the yaml settings
+    if args.test_dataset:
+        config['test_dataset'] = args.test_dataset
+    if args.weights_path:
+        config['weights_path'] = args.weights_path
+        weights_path = args.weights_path
+    visualize_patchwise =   args.visualize_patchwise
+    # init seed
+    init_seed(config)
+
+    # set cudnn benchmark if needed
+    if config['cudnn']:
+        cudnn.benchmark = True
+
+    config['clip_size'] = config['test_clip_size']
+
+    # prepare the testing data loader
+    test_data_loaders = prepare_testing_data(config)
+    
+    # prepare the model (detector)
+    model_class = DETECTOR[config['model_name']]
+    model = model_class(config).to(device)
+    epoch = 0
+    if weights_path:
+        try:
+            epoch = int(weights_path.split('/')[-1].split('.')[0].split('_')[2])
+        except:
+            epoch = 0
+        # breakpoint()
+        ckpt = torch.load(weights_path, map_location=device)
+        try:
+            model.load_state_dict(ckpt, strict=True)
+            print('===> Load checkpoint done!')
+
+        except Exception as e:
+            print(f'Failed to load checkpoint: {e}')
+            print('use flesxible loading')
+            new_state = {}
+            for k, v in ckpt.items():
+                new_k = k.replace("module.", "")  # remove the DDP prefix
+                new_state[new_k] = v
+
+            model.load_state_dict(new_state, strict=True)
+                
+    
+    # start testing
+    best_metric = test_epoch(model, test_data_loaders, visualize_patchwise=visualize_patchwise)
+    print(best_metric)
+    # average video_auc
+    video_aucs = []
+    for dataset_name in best_metric:
+        video_aucs.append(best_metric[dataset_name]['video_auc'])
+    avg_video_auc = sum(video_aucs)/len(video_aucs)
+    print(f'Average video AUC: {avg_video_auc}')
+    wandb.log({"test_best/avg_video_auc": avg_video_auc})
+    print('===> Test Done!')
+
+if __name__ == '__main__':
+    main()

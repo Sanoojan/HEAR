@@ -1,0 +1,86 @@
+# HEAR CLIP-L/14 inference configuration. Dataset paths come from test_config.yaml.
+model_name: clip
+clip_backbone: openai/clip-vit-large-patch14
+classifier: HEARClassifier
+layer_sep_classifiers: true
+topk_percent: 0.1
+apply_layernorm: true
+train_dataset:
+- FaceForensics++
+test_dataset:
+- FaceForensics++
+- Celeb-DF-v2
+- DFDCP
+- DFDC
+- WDF
+- DeepFakeDetection
+balanced_batch_sampler: false
+video_mode: true
+clip_size: 32
+train_clip_size: 8
+test_clip_size: 32
+compression: c23
+train_batchSize: 16
+test_batchSize: 1
+workers: 1
+frame_num:
+  train: 32
+  test: 32
+resolution: 224
+mean:
+- 0.48145466
+- 0.4578275
+- 0.40821073
+std:
+- 0.26862954
+- 0.26130258
+- 0.27577711
+use_data_augmentation: true
+data_aug:
+  flip_prob: 0.5
+  rotate_prob: 0.5
+  rotate_limit:
+  - -10
+  - 10
+  blur_prob: 0.5
+  blur_limit:
+  - 3
+  - 7
+  brightness_limit:
+  - -0.1
+  - 0.1
+  contrast_limit:
+  - -0.1
+  - 0.1
+  quality_lower: 40
+  quality_upper: 100
+optimizer:
+  classifier_only: true
+  type: adam
+  adam:
+    lr: 0.0002
+    beta1: 0.9
+    beta2: 0.999
+    eps: 1.0e-08
+    weight_decay: 0.0005
+    amsgrad: false
+lr_scheduler: null
+nEpochs: 15
+start_epoch: 0
+manualSeed: 1024
+save_ckpt: true
+save_feat: true
+loss_func: cross_entropy
+additional_losses:
+- All_layer_CE
+- frame_level_mil_ranking
+All_layer_CE:
+  use_mean_pred: true
+  CE_alpha: 0.0
+frame_level_mil_ranking:
+  alpha: 1.0
+  margin: 0.6
+  topk_percent: 0.1
+metric_scoring: auc
+cuda: true
+cudnn: true

@@ -1,0 +1,13 @@
+name: HEAR
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip=24.3.1
+  - setuptools=69.5.1
+  - wheel
+  - git
+  - cmake<4
+  - cxx-compiler
+  - ffmpeg
+# Install PyTorch first, then requirements.txt; see README.md.

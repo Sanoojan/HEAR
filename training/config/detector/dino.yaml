@@ -1,0 +1,74 @@
+# Backbone and HEAR
+model_name: dino
+dino_model: vit_large_patch16_dinov3
+classifier: HEARClassifier
+layer_sep_classifiers: true
+topk_percent: 0.1
+apply_layernorm: true
+
+# Data
+train_dataset: [FaceForensics++]
+test_dataset: [FaceForensics++, Celeb-DF-v2, DFDCP, DFDC, WDF, DeepFakeDetection]
+video_mode: true
+clip_size: 32
+train_clip_size: 8
+test_clip_size: 32
+compression: c23
+train_batchSize: 16
+test_batchSize: 16
+workers: 8
+frame_num:
+  train: 32
+  test: 32
+resolution: 256
+mean: [0.485, 0.456, 0.406]
+std: [0.229, 0.224, 0.225]
+
+# RGB augmentation
+use_data_augmentation: true
+data_aug:
+  flip_prob: 0.5
+  rotate_prob: 0.5
+  rotate_limit: [-10, 10]
+  blur_prob: 0.5
+  blur_limit: [3, 7]
+  brightness_limit: [-0.1, 0.1]
+  contrast_limit: [-0.1, 0.1]
+  quality_lower: 40
+  quality_upper: 100
+
+# Optimization
+optimizer:
+  classifier_only: true
+  type: adam
+  adam:
+    lr: 0.0002
+    beta1: 0.9
+    beta2: 0.999
+    eps: 1.0e-08
+    weight_decay: 0.0005
+    amsgrad: false
+lr_scheduler: null
+
+# Training
+nEpochs: 15
+start_epoch: 0
+manualSeed: 1024
+save_ckpt: true
+save_feat: true
+
+# Supervision (CE weight is zero; only MIL ranking trains the model)
+loss_func: cross_entropy
+additional_losses: [All_layer_CE, frame_level_mil_ranking]
+All_layer_CE:
+  use_mean_pred: true
+  CE_alpha: 0.0
+frame_level_mil_ranking:
+  alpha: 1.0
+  margin: 0.6
+  topk_percent: 0.1
+
+# Evaluation and device
+metric_scoring: auc
+cuda: true
+cudnn: true

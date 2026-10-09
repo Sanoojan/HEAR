@@ -1,0 +1,195 @@
+# log dir 
+log_dir: logs_debug/clip
+
+# model setting
+pretrained: /data/home/zhiyuanyan/DeepfakeBench/training/pretrained/xception-b5690688.pth   # path to a pre-trained model, if using one
+model_name: clip   # model name
+backbone_name: vit  # backbone name
+clip_backbone: openai/clip-vit-large-patch14 # options : 'openai/clip-vit-base-patch16', 'openai/clip-vit-base-patch32', 'openai/clip-vit-large-patch14'
+dim: 1024 # feature dimension of backbone
+
+#backbone setting
+backbone_config:
+  mode: original
+  num_classes: 2
+  inc: 3
+  dropout: false
+
+# dataset
+all_dataset: [FaceForensics++, FF-F2F, FF-DF, FF-FS, FF-NT, FaceShifter, DeepFakeDetection, Celeb-DF-v1, Celeb-DF-v2, DFDCP, DFDC, DeeperForensics-1.0, UADFV,WDF]
+train_dataset: [FaceForensics++]
+test_dataset: [FaceForensics++, Celeb-DF-v2, DFDCP, DFDC,WDF,DeepFakeDetection]
+# test_dataset: [FaceForensics++, Celeb-DF-v1, Celeb-DF-v2, DFDCP, DFDC,WDF,DeepFakeDetection,UADFV]
+# test_dataset: [FaceForensics++, Celeb-DF-v1, Celeb-DF-v2, DFDCP, DFDC,WDF,DeepFakeDetection]
+# test_dataset: [FaceForensics++, Celeb-DF-v1]
+balanced_batch_sampler: false
+# test_dataset: [FaceForensics++]
+
+video_mode: true
+clip_size: 32
+train_clip_size: 32
+test_clip_size: 32
+compression: c23  # compression-level for videos
+train_batchSize: 8   # training batch size
+test_batchSize: 16  # test batch size
+workers: 8   # number of data loading workers
+frame_num: {'train': 32, 'test': 32}   # number of frames to use per video in training and testing
+resolution: 224   # resolution of output image to network
+with_mask: false   # whether to include mask information in the input
+with_landmark: false   # whether to include facial landmark information in the input
+with_flow: false   # whether to include optical flow information in the input
+
+# data augmentation
+use_data_augmentation: true  # Add this flag to enable/disable data augmentation
+data_aug:
+  flip_prob: 0.5
+  rotate_prob: 0.5
+  rotate_limit: [-10, 10]
+  blur_prob: 0.5
+  blur_limit: [3, 7]
+  brightness_prob: 0.5
+  brightness_limit: [-0.1, 0.1]
+  contrast_limit: [-0.1, 0.1]
+  quality_lower: 40
+  quality_upper: 100
+
+# mean and std for normalization
+# mean: [0.5, 0.5, 0.5]
+# std: [0.5, 0.5, 0.5]
+mean: [0.48145466, 0.4578275, 0.40821073]
+std: [0.26862954, 0.26130258, 0.27577711]
+
+classifier: PatchClS_TripleStream_Transformer  # choose between 'linear','PatchClS_TripleStream_3DConv_TopKFrame', 'PatchTemporalClassifier','ClsDiffClassifier' , 'PatchClassifierCNN3D','PatchTemporalClassifierCNN3D', 'PatchClassifier3D2Conv' and 'PatchClassifier', 'PatchClassifierCNN3D_ATTN', 'PatchClassifier3DConv_TopK'
+layer_sep_classifiers: true  # whether to use separate classifiers for different layers in the backbone
+return_patch_scores: true  # whether the model should return patch scores in addition to the final classification
+return_patch_scores_fc: false
+topk_percent: 0.1
+spatio_temporal_patches: true  # whether to use spatio-temporal patches in PatchClassifier3DConv_TopK
+
+# optimizer config
+optimizer:
+  # choose between 'adam' and 'sgd'
+  classifier_only: true  # whether to optimize only the classifier parameters
+  type: adam
+  adam:
+    # lr: 0.000005 # learning rate
+    lr: 0.0002  # learning rate # classiafier only 0.0005  # full model 0.000005
+    beta1: 0.9  # beta1 for Adam optimizer
+    beta2: 0.999 # beta2 for Adam optimizer
+    eps: 0.00000001  # epsilon for Adam optimizer
+    weight_decay: 0.0005  # weight decay for regularization
+    amsgrad: false
+  sgd:
+    lr: 0.0002  # learning rate
+    momentum: 0.9  # momentum for SGD optimizer
+    weight_decay: 0.0005  # weight decay for regularization
+
+# training config
+lr_scheduler: null   # learning rate scheduler
+nEpochs: 10   # number of epochs to train for
+start_epoch: 0   # manual epoch number (useful for restarts)
+save_epoch: 1   # interval epochs for saving models
+rec_iter: 100   # interval iterations for recording
+logdir: ./logs   # folder to output images and logs
+manualSeed: 1024   # manual seed for random number generation
+save_ckpt: true   # whether to save checkpoint
+save_feat: true   # whether to save features
+
+# loss function
+loss_func: cross_entropy   # loss function to use
+losstype: null
+additional_losses: [All_layer_CE,Patch_frame_MIL_ranking_all]  # All_layer_CE,Patch_frame_MIL_ranking_all, additional loss functions to use {options: [KL_loss, Selected_layer_CE, All_layer_CE,Patch_MIL,Patch_Xray]}
+KL_loss:
+  temperature: 2.0
+  alpha: 0.5
+# Selected_layer_CE:
+#   layer: 24
+Patch_MIL:
+  alpha: 0.5
+  mil_type: topk
+  k: 5
+Patch_Xray_CE:
+  alpha: 0.5
+  xray_importance: 2.0
+  k: 5
+Patch_Temporal_Xray:
+  alpha: 0.2
+  window: 3        # temporal window size
+  k: 5  
+Patch_Xray:
+  alpha: 0.3        # moderate auxiliary strength
+  k: 10             # top-K patches × frames (MIL)  
+# Patch_consistency_loss:
+#   alpha: 0.1
+#   window: 3
+#   use_sigmoid_weight: false
+#   use_variance: false
+#   frame_variance_weight: 0.0
+#   patch_variance_weight: 0.0
+#   use_difference: false
+#   use_corr: true
+#   corr_weight: 1.0
+#   fake_patch_only: true
+#   fake_topk: 30
+#   fake_thresh: null
+Patch_frame_CE:
+  alpha: 0.5
+  topk_percent: 0.2
+All_layer_CE:
+  ranking_margin: 1.0
+  use_ranking_loss: false
+  use_mean_pred: true
+  CE_alpha: 0.0
+
+
+Patch_continuity_loss:
+  alpha: 0.02
+  topk: 5
+  spatial_radius: 1
+Patch_continuity_flow_loss:
+  alpha: 0.02 
+  conf_thresh: 0.6
+Patch_frame_MIL_ranking:
+  alpha: 1.0
+  margin: 1.0
+  use_variable_margin: true
+  use_sigmoid: false
+  random_pairs: 500
+
+Patch_frame_MIL_ranking_all:
+  alpha: 1.0
+  margin: 0.6
+  use_variable_margin: false
+  max_margin: 0.9
+  min_margin: 0.1
+  frame_variance_weight: 0.0
+  patch_variance_weight: 0.0
+  use_sigmoid: false
+  topk_percent: 0.1
+  cls_token_selection: false
+  cls_token_sigmoid: false
+  cls_token_topk_percent: 0.8
+  pair_mode: all
+
+patch_temporal_jaccard_loss:
+  alpha: 0.5
+
+
+mid_frame_prediction: false  # whether to use mid-frame prediction
+middle_frame_prediction_loss:
+  alpha: 0.5
+# metric
+metric_scoring: auc   # metric for evaluation (auc, acc, eer, ap)
+
+# cuda
+
+cuda: true   # whether to use CUDA acceleration
+cudnn: true   # whether to use CuDNN for convolution operations
+visualize_patchwise: false  # whether to visualize patchwise scores
+
+# other inference params
+
+apply_layernorm: true  # whether to apply LayerNorm to the input of transformer
+
+Image_diff: false  # whether to use image difference as input
+Image_diff_lag: 1  # lag for image differe
